@@ -136,14 +136,148 @@ For production deployment:
 
 The application will serve the built frontend files and API from the same Express server.
 
-## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+## Working flow 
 
-## License
+**Step 1: Browser Request - What Happens When You Type localhost:5000**
 
-This project is open source and available under the MIT License.
+1. Server Entry Point : Express server is listening on port 5000
+2. Route Registration : Calls registerRoutes(app) to set up API and WebSocket routes
+3. Vite Setup : In development, sets up Vite middleware to serve the React frontend
+4. Reads client/index.html template 
+5. Vite transforms the HTML and serves it
+6. Ater the Vite setup, HTML template Creates root div where React app will mount and load the main react entry point
+
+**Step 2: React Application Bootstrap**
+
+7. Then all the imports done for react app, and when the route is '/' then it will render the chat component
+8. showJoinScreen starts as true, so join screen displays first [Form with username input and "Join Chat" button, and Form has onSubmit={handleJoinChat} handler]
+9. currentuser start as null in the starting and uses the react-query for fetching the messages
+
+**Step 4: User Enters Name and Hits Enter - handleJoinChat Function**
+
+10. prevent form from submission -> creates the user object with timestamp Id and trimmed username
+11. currentuser state update and showjoinscreen state as true (hide form and show the messaging screen)
+
+**Step 5: WebSocket Connection Triggered by currentUser Change**
+12. when currentuser changes from null to a user object then useEffect triggers
+13. Creates new WebSocket connection
+14. Sends the join message with the user object on the server
+
+**Step 6: Server Receives WebSocket Connection**
+
+15.  When server receives join message, stores userId and username on WebSocket
+16. Fetches all stored messages and sends them to the new user as initial_messages
+17. Broadcasts user_joined event to ALL connected clients with username and online count
+
+
+**Step 7: Client Receives Messages and Updates UI**
+
+18. When receives initial_messages, sets the messages state
+19. When receives user_joined, updates online count and shows toast notification
+
+**Step 8: User Types and Sends a Message**
+
+20. handleSendMessage function calls on the chat component, which prevent form from submission -> uses the react query mutation to make the post request to the api/message endpoint -> clears the input field
+
+**Step 9: sendMessageMutation Makes API Call**
+
+21. Uses apiRequest to make POST request to /api/message
+22. Returns parsed JSON response and Makes fetch request to /api/message with JSON body
+
+**Step 10: Server Handles POST /api/message**
+
+23. server recieves the post request, stores the message in the memory with the pending sentiment
+24. Immediately broadcasts message as new_message to all the connected users
+25. Sets up 3-second delayed sentiment analysis using the settimeout -> server send the sentiment_update to the client 
+
+**Step 11: Client Receives new_message and sentiment_update**
+
+26. Adds new message to messages state array
+27. Message appears immediately with "pending" sentiment (blue pulsing indicator) and When receives sentiment_update (3 seconds later)
+28. Finds message by ID and updates its sentiment and UI immediately updates color indicator (green/yellow/red) and text
+
+
+## Message Storage 
+
+It uses the JavaScript Maps to store data in the server's memory (RAM) and when server restart all the data will be lost.
+
+like this 
+
+messages = Map {
+  1 => {
+    id: 1,
+    userId: "1752910298765",
+    username: "Alice",
+    text: "Hello everyone!",
+    sentiment: "pending",
+    createdAt: 2025-01-19T10:30:00.000Z
+  },
+  2 => {
+    id: 2,
+    userId: "1752910319822",
+    username: "Bob", 
+    text: "This is great!",
+    sentiment: "positive",  // Updated after sentiment analysis
+    createdAt: 2025-01-19T10:31:00.000Z
+  },
+  3 => {
+    id: 3,
+    userId: "1752910298765",
+    username: "Alice",
+    text: "I'm feeling sad today",
+    sentiment: "negative",  // Updated after sentiment analysis
+    createdAt: 2025-01-19T10:32:00.000Z
+  }
+}
+
+## Online User Count Feature
+
+**Server Side** : Uses a JavaScript Set to store all active WebSocket connections and Each WebSocket represents one connected user
+
+// Store connected clients
+const clients = new Set<ChatWebSocket>();
+
+wss.on('connection', (ws: ChatWebSocket) => {
+  clients.add(ws);  // Add new connection to Set
+  // ... later when user sends 'join' message:
+  onlineCount: clients.size  // Send current count to all users
+});
+
+// User Leaves
+ws.on('close', () => {
+  clients.delete(ws);  // Remove connection from Set
+  if (ws.username) {
+    broadcast({
+      type: 'user_left',
+      username: ws.username,
+      onlineCount: clients.size  // Send updated count
+    });
+  }
+});
+
+
+**Client-Side** : When user_joined message received, updates onlineCount state and When user_left message received, updates onlineCount state
+
+
+## Message Count Implementation:
+
+Simply shows the length of the messages array stored in React state and Updates automatically when new messages are added via WebSocket
+
+## Leave Chat Functionality
+
+1. Closes WebSocket connection if it exists
+2. Clears all messages from local state
+3. Shows join screen again (setShowJoinScreen(true))
+4. Clears username input field
+
+ws.on('close', () => {
+  clients.delete(ws);  // Remove from connected clients Set
+  if (ws.username) {
+    broadcast({
+      type: 'user_left',
+      username: ws.username,
+      onlineCount: clients.size  // Send updated count to remaining users
+    });
+  }
+});
